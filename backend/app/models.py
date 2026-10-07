@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import ClassVar, Optional
 
+from sqlalchemy import Index, text
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -36,6 +37,7 @@ class Kettle(SQLModel, table=True):
     bench: int = 0
     workshop: Optional[Workshop] = Relationship(back_populates="kettles")
     cooks: list["CookLog"] = Relationship(back_populates="kettle")
+    rack_occupancies: list["CoolingRack"] = Relationship(back_populates="kettle")
 
 
 class CookLog(SQLModel, table=True):
@@ -45,3 +47,37 @@ class CookLog(SQLModel, table=True):
     peak_temp_c: float
     operator: str = ""
     kettle: Optional[Kettle] = Relationship(back_populates="cooks")
+
+
+class CoolingRack(SQLModel, table=True):
+    """冷却架占位：一条 = 某锅占用某架位号的一段区间（released_at 为空即未释放）。"""
+
+    MIN_SLOT: ClassVar[int] = 1
+    MAX_SLOT: ClassVar[int] = 20
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kettle_id: int = Field(foreign_key="kettle.id")
+    slot_no: int
+    occupied_at: datetime = Field(default_factory=utcnow)
+    occupied_by: str = ""
+    released_at: Optional[datetime] = Field(default=None, index=True)
+    kettle: Optional[Kettle] = Relationship(back_populates="rack_occupancies")
+
+    __table_args__ = (
+        # 架位号撞车：同一架位号，全坊只许有一条未释放占用（跨锅也撞）。
+        Index(
+            "uq_rack_open_slot",
+            "slot_no",
+            unique=True,
+            postgresql_where=text("released_at IS NULL"),
+            sqlite_where=text("released_at IS NULL"),
+        ),
+        # 同一锅未释放占用最多一条。
+        Index(
+            "uq_rack_open_kettle",
+            "kettle_id",
+            unique=True,
+            postgresql_where=text("released_at IS NULL"),
+            sqlite_where=text("released_at IS NULL"),
+        ),
+    )
